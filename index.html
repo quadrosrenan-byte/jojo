@@ -1,1 +1,1007 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Frame Hustle: Turn-Based Combat</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Roboto:wght@400;700&display=swap');
 
+        body {
+            font-family: 'Roboto', sans-serif;
+            background-color: #1a1a2e; /* Dark theme */
+            color: #e0e0e0;
+            overflow: hidden; /* Prevent scrolling */
+            user-select: none; /* Prevent text selection during rapid clicking */
+        }
+
+        h1, h2, h3, .pixel-text {
+            font-family: 'Press Start 2P', cursive;
+        }
+
+        /* Canvas styling for crisp pixel art look if we use small sprites */
+        #gameCanvas {
+            image-rendering: pixelated; /* Crisp edges */
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.8);
+            border: 4px solid #30475e;
+            background: linear-gradient(to bottom, #4a69bd 0%, #2f3640 100%); /* Simple sky/ground */
+            width: 100%;
+            max-width: 800px;
+            height: auto;
+            aspect-ratio: 16/9;
+            display: block;
+            margin: 0 auto;
+        }
+
+        /* Action button styling */
+        .action-btn {
+            background-color: #30475e;
+            color: white;
+            border: 2px solid #5a7b9c;
+            border-radius: 4px;
+            padding: 10px 15px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            text-transform: uppercase;
+            font-size: 0.85rem;
+        }
+
+        .action-btn:hover:not(:disabled) {
+            background-color: #5a7b9c;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+
+        .action-btn:active:not(:disabled) {
+            transform: translateY(0);
+            box-shadow: none;
+        }
+
+        .action-btn:disabled {
+            background-color: #2a2a2a;
+            border-color: #444;
+            color: #666;
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+
+        .btn-attack { border-color: #e74c3c; }
+        .btn-attack:hover:not(:disabled) { background-color: #c0392b; }
+
+        .btn-move { border-color: #3498db; }
+        .btn-move:hover:not(:disabled) { background-color: #2980b9; }
+        
+        .btn-defend { border-color: #f1c40f; }
+        .btn-defend:hover:not(:disabled) { background-color: #f39c12; }
+
+        /* Health Bar Styles */
+        .health-bar-container {
+            width: 100%;
+            height: 24px;
+            background-color: #222;
+            border: 2px solid #555;
+            position: relative;
+        }
+        .health-bar-fill {
+            height: 100%;
+            background-color: #2ecc71;
+            transition: width 0.3s ease-out;
+        }
+        #p1-health-fill { transform-origin: left; }
+        #p2-health-fill { transform-origin: right; float: right; background-color: #e74c3c; }
+        
+        .advantage-badge {
+            background-color: #e67e22;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-weight: bold;
+            display: inline-block;
+            margin-left: 10px;
+        }
+        
+        /* Modal for Game Over / Start */
+        #overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 50;
+        }
+        
+        .log-container {
+            background: rgba(0,0,0,0.6);
+            border: 1px solid #444;
+            height: 120px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 0.9rem;
+        }
+        .log-entry { margin-bottom: 4px; }
+        .log-p1 { color: #81ecec; }
+        .log-p2 { color: #fab1a0; }
+        .log-sys { color: #ffeaa7; font-style: italic; }
+
+    </style>
+</head>
+<body class="h-screen w-full flex flex-col items-center justify-center p-2 sm:p-4">
+
+    
+    <!-- Title Area -->
+    <div class="w-full max-w-4xl flex justify-between items-end mb-2">
+        <h1 class="text-xl sm:text-2xl text-yellow-400 tracking-wider" style="text-shadow: 2px 2px 0 #000;">FRAME HUSTLE</h1>
+        <div class="text-xs text-gray-400 pb-1">Turn-Based Combat Simulator</div>
+    </div>
+
+    <!-- Main Game Container -->
+    <div class="w-full max-w-4xl bg-gray-900 rounded-lg shadow-2xl p-2 sm:p-4 border border-gray-700 flex flex-col relative">
+        
+        <!-- HUD Overlay (Health & Status) -->
+        <div class="w-full flex justify-between items-center mb-2 px-2 gap-4">
+            <!-- Player 1 Status -->
+            <div class="flex-1 flex flex-col gap-1">
+                <div class="flex justify-between items-baseline">
+                    <span class="pixel-text text-sm sm:text-base text-blue-300">P1 (YOU)</span>
+                    <span id="p1-state" class="text-xs text-gray-400">IDLE</span>
+                </div>
+                <div class="health-bar-container">
+                    <div id="p1-health-fill" class="health-bar-fill" style="width: 100%;"></div>
+                </div>
+                <div class="text-xs text-right text-gray-400">Frames locked: <span id="p1-lock">0</span></div>
+            </div>
+
+            <!-- VS Badge -->
+            <div class="pixel-text text-yellow-500 text-lg mx-2 text-center flex flex-col">
+                VS
+                <span id="frame-counter" class="text-xs text-gray-500 mt-1" style="font-family: monospace;">F: 0</span>
+            </div>
+
+            <!-- Player 2 Status -->
+            <div class="flex-1 flex flex-col gap-1">
+                <div class="flex justify-between items-baseline flex-row-reverse">
+                    <span class="pixel-text text-sm sm:text-base text-red-400">CPU</span>
+                    <span id="p2-state" class="text-xs text-gray-400">IDLE</span>
+                </div>
+                <div class="health-bar-container">
+                    <div id="p2-health-fill" class="health-bar-fill" style="width: 100%;"></div>
+                </div>
+                <div class="text-xs text-left text-gray-400">Frames locked: <span id="p2-lock">0</span></div>
+            </div>
+        </div>
+
+        <!-- The Canvas -->
+        <canvas id="gameCanvas" width="800" height="450" class="rounded"></canvas>
+
+        <!-- UI Lower Section -->
+        <div class="mt-4 flex flex-col md:flex-row gap-4 h-48 md:h-32">
+            
+            <!-- Controls Area -->
+            <div class="flex-1 bg-gray-800 rounded p-3 border border-gray-600 flex flex-col justify-between">
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="text-sm font-bold text-white uppercase tracking-wide">Action Select</h3>
+                    <span id="advantage-indicator" class="text-xs font-bold text-green-400">YOUR TURN</span>
+                </div>
+                
+                <div id="action-panel" class="grid grid-cols-3 gap-2">
+                    <!-- Actions will be generated here by JS -->
+                </div>
+                
+                <div class="mt-2 text-xs text-gray-400 flex justify-between">
+                    <span id="hover-desc">Hover over a move to see details.</span>
+                    <button id="btn-lock-in" class="bg-green-600 hover:bg-green-500 text-white font-bold py-1 px-4 rounded shadow disabled:opacity-50 disabled:cursor-not-allowed">LOCK IN</button>
+                </div>
+            </div>
+
+            <!-- Battle Log -->
+            <div class="flex-1 bg-gray-800 rounded p-2 border border-gray-600 flex flex-col">
+                <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wide mb-1 px-1">Combat Log</h3>
+                <div id="combat-log" class="log-container p-2 rounded text-left flex-1 w-full">
+                    <!-- Logs go here -->
+                    <div class="log-sys">Match started! Select your first move.</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Overlays (Start/End) -->
+        <div id="overlay" class="rounded-lg">
+            <h2 id="overlay-title" class="pixel-text text-3xl sm:text-4xl text-yellow-400 mb-6 text-center shadow-lg" style="text-shadow: 3px 3px 0 #000;">FRAME HUSTLE</h2>
+            <p id="overlay-desc" class="text-white mb-8 text-center max-w-md">Predict your opponent, lock in your move, and watch the timeline unfold frame by frame.</p>
+            <button id="btn-start" class="pixel-text bg-red-600 hover:bg-red-500 text-white py-3 px-8 rounded shadow-[4px_4px_0_0_#000] active:shadow-[0_0_0_0_#000] active:translate-y-1 active:translate-x-1 transition-all">START GAME</button>
+        </div>
+
+    </div>
+
+    <script>
+        /**
+         * FRAME HUSTLE CORE ENGINE
+         * A simplified turn-based fighting game engine focusing on frame data and hitboxes.
+         */
+
+        // Canvas Setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const CANVAS_WIDTH = canvas.width;
+        const CANVAS_HEIGHT = canvas.height;
+        const GROUND_Y = CANVAS_HEIGHT - 50;
+
+        // UI Elements
+        const ui = {
+            p1Health: document.getElementById('p1-health-fill'),
+            p2Health: document.getElementById('p2-health-fill'),
+            p1State: document.getElementById('p1-state'),
+            p2State: document.getElementById('p2-state'),
+            p1Lock: document.getElementById('p1-lock'),
+            p2Lock: document.getElementById('p2-lock'),
+            actionPanel: document.getElementById('action-panel'),
+            lockInBtn: document.getElementById('btn-lock-in'),
+            hoverDesc: document.getElementById('hover-desc'),
+            combatLog: document.getElementById('combat-log'),
+            advantageInd: document.getElementById('advantage-indicator'),
+            frameCounter: document.getElementById('frame-counter'),
+            overlay: document.getElementById('overlay'),
+            overlayTitle: document.getElementById('overlay-title'),
+            btnStart: document.getElementById('btn-start')
+        };
+
+        // Game Constants
+        const FPS = 60; // Logical frames per second for resolution
+        const MAX_HEALTH = 1000;
+        const GRAVITY = 0.8;
+        const DRAG = 0.85; // Ground friction
+        
+        // Game State Enum
+        const GAME_STATE = {
+            MENU: 0,
+            PLANNING: 1,    // Players choosing actions
+            RESOLVING: 2,   // Actions playing out
+            GAME_OVER: 3
+        };
+
+        // Character States
+        const CHAR_STATE = {
+            IDLE: 'IDLE',
+            STARTUP: 'STARTUP',   // Windup of an attack
+            ACTIVE: 'ACTIVE',     // Hitbox is active
+            RECOVERY: 'RECOVERY', // Cooling down after an attack/move
+            HITSTUN: 'HITSTUN',   // Reeling from a hit
+            BLOCKSTUN: 'BLOCKSTUN',// Reeling from blocking a hit
+            AIRBORNE: 'AIRBORNE', // In the air, neutral
+            KNOCKDOWN: 'KNOCKDOWN'// On the ground after hard hit
+        };
+
+        
+        /**
+         * MOVE DEFINITIONS
+         * The core of the game. Every move has frame data defining its speed.
+         * Startup: Frames before the move actually 'hits' or 'happens'.
+         * Active: Frames a hitbox is present.
+         * Recovery: Frames character is stuck after the move finishes.
+         * Advantage on Hit/Block dictates who gets to act first next.
+         */
+        const MOVES = {
+            WAIT: {
+                id: 'WAIT', name: 'Wait', type: 'idle', class: '',
+                startup: 0, active: 0, recovery: 10,
+                desc: 'Do nothing for 10 frames to see what the opponent does.'
+            },
+            DASH_FWD: {
+                id: 'DASH_FWD', name: 'Dash Fwd', type: 'move', class: 'btn-move',
+                startup: 2, active: 10, recovery: 8,
+                velX: 8, velY: 0,
+                desc: 'Quick burst forward (20f total). Good for closing distance.'
+            },
+            DASH_BCK: {
+                id: 'DASH_BCK', name: 'Dash Bck', type: 'move', class: 'btn-move',
+                startup: 2, active: 12, recovery: 6,
+                velX: -6, velY: 0,
+                desc: 'Quick hop backwards (20f total). Creates space.'
+            },
+            JUMP: {
+                id: 'JUMP', name: 'Jump', type: 'move', class: 'btn-move',
+                startup: 4, active: 30, recovery: 0, // Airborne state handles recovery
+                velX: 0, velY: -15,
+                desc: 'Leap straight up. Avoids low attacks and grabs.'
+            },
+            BLOCK: {
+                id: 'BLOCK', name: 'Block', type: 'defend', class: 'btn-defend',
+                startup: 1, active: 20, recovery: 5,
+                desc: 'Guard against strikes. Reduces damage and prevents hitstun.'
+            },
+            JAB: {
+                id: 'JAB', name: 'Jab', type: 'attack', class: 'btn-attack',
+                startup: 4, active: 3, recovery: 12,
+                damage: 40, hitstun: 20, blockstun: 10, pushback: 2,
+                hitbox: { w: 40, h: 20, ox: 20, oy: -50 }, // Relative to player center
+                desc: 'Very fast attack (4f startup). Short range, low damage.'
+            },
+            HEAVY_KICK: {
+                id: 'HEAVY_KICK', name: 'Heavy Kick', type: 'attack', class: 'btn-attack',
+                startup: 14, active: 4, recovery: 22,
+                damage: 120, hitstun: 35, blockstun: 15, pushback: 6,
+                hitbox: { w: 60, h: 30, ox: 30, oy: -40 },
+                desc: 'Slow, long-range kick (14f startup). High damage and stun.'
+            },
+            SWEEP: {
+                id: 'SWEEP', name: 'Sweep', type: 'attack', class: 'btn-attack',
+                startup: 9, active: 4, recovery: 18,
+                damage: 60, hitstun: 40, blockstun: 12, pushback: 3, knockdown: true,
+                hitbox: { w: 50, h: 20, ox: 20, oy: 0 },
+                desc: 'Low attack (9f startup). Knocks down on hit.'
+            }
+        };
+
+
+        class Fighter {
+            constructor(id, x, color, facingRight) {
+                this.id = id;
+                this.x = x;
+                this.y = GROUND_Y;
+                this.w = 40;
+                this.h = 80;
+                this.color = color;
+                this.facing = facingRight ? 1 : -1; // 1 = right, -1 = left
+                
+                this.health = MAX_HEALTH;
+                this.state = CHAR_STATE.IDLE;
+                this.stateTimer = 0; // Frames spent in current state/move phase
+                
+                // Physics
+                this.vx = 0;
+                this.vy = 0;
+                
+                // Move execution logic
+                this.currentMove = null;
+                this.movePhase = 'NONE'; // NONE, STARTUP, ACTIVE, RECOVERY
+                this.lockedFrames = 0; // How many frames until this character can act again
+                
+                // Intent (selected move for next resolution phase)
+                this.queuedAction = null;
+                
+                // Combo / hit data tracking
+                this.comboCount = 0;
+            }
+
+            updatePhysics() {
+                // Apply Gravity
+                if (this.y < GROUND_Y) {
+                    this.vy += GRAVITY;
+                    this.state = CHAR_STATE.AIRBORNE;
+                } else if (this.y >= GROUND_Y && this.vy > 0) {
+                    this.y = GROUND_Y;
+                    this.vy = 0;
+                    if (this.state === CHAR_STATE.AIRBORNE) {
+                        this.changeState(CHAR_STATE.IDLE);
+                        // Landing recovery could go here
+                    }
+                }
+
+                // Apply horizontal movement and friction
+                this.x += this.vx;
+                this.y += this.vy;
+
+                // Ground friction
+                if (this.y >= GROUND_Y) {
+                    this.vx *= DRAG;
+                    if (Math.abs(this.vx) < 0.5) this.vx = 0;
+                }
+
+                // Screen bounds
+                if (this.x - this.w/2 < 0) this.x = this.w/2;
+                if (this.x + this.w/2 > CANVAS_WIDTH) this.x = CANVAS_WIDTH - this.w/2;
+            }
+
+            // Starts a new move
+            executeAction(actionId) {
+                const move = MOVES[actionId];
+                if (!move) return;
+
+                this.currentMove = move;
+                this.stateTimer = 0;
+                this.changeState(CHAR_STATE.STARTUP);
+                this.movePhase = 'STARTUP';
+                
+                // Total lock time is startup + active + recovery
+                this.lockedFrames = move.startup + move.active + move.recovery;
+                
+                // Calculate movement application timing. 
+                // For dashes, apply velocity immediately in startup. For attacks, maybe later.
+                if (move.type === 'move' && move.id !== 'WAIT') {
+                    // Apply velocity relative to facing direction
+                    this.vx = move.velX * this.facing;
+                    this.vy = move.velY;
+                }
+                
+                logCombat(`${this.id} starts ${move.name}...`, this.id === 'P1' ? 'p1' : 'p2');
+            }
+
+            // Called every simulation frame to advance the current move
+            processMoveFrame() {
+                if (this.lockedFrames > 0) {
+                    this.lockedFrames--;
+                    this.stateTimer++;
+
+                    // Progression through move phases
+                    if (this.currentMove) {
+                        const m = this.currentMove;
+                        if (this.movePhase === 'STARTUP' && this.stateTimer >= m.startup) {
+                            // Transition to ACTIVE
+                            this.movePhase = 'ACTIVE';
+                            this.changeState(CHAR_STATE.ACTIVE);
+                            this.stateTimer = 0;
+                            // If attack has no active frames (like a dash), skip to recovery
+                            if (m.active === 0) {
+                                this.movePhase = 'RECOVERY';
+                                this.changeState(CHAR_STATE.RECOVERY);
+                            }
+                        } 
+                        else if (this.movePhase === 'ACTIVE' && this.stateTimer >= m.active) {
+                            // Transition to RECOVERY
+                            this.movePhase = 'RECOVERY';
+                            this.changeState(CHAR_STATE.RECOVERY);
+                            this.stateTimer = 0;
+                            if (m.recovery === 0) {
+                                this.finishMove();
+                            }
+                        }
+                        else if (this.movePhase === 'RECOVERY' && this.stateTimer >= m.recovery) {
+                            // Move complete
+                            this.finishMove();
+                        }
+                    }
+                } 
+                
+                // Handle hitstun/blockstun countdown
+                if (this.state === CHAR_STATE.HITSTUN || this.state === CHAR_STATE.BLOCKSTUN || this.state === CHAR_STATE.KNOCKDOWN) {
+                     if (this.lockedFrames <= 0) {
+                         this.changeState(CHAR_STATE.IDLE);
+                     }
+                }
+
+                // If no longer locked and on ground, return to idle
+                if (this.lockedFrames === 0 && this.state !== CHAR_STATE.AIRBORNE && this.y >= GROUND_Y) {
+                    if (this.state !== CHAR_STATE.IDLE) {
+                        this.changeState(CHAR_STATE.IDLE);
+                    }
+                }
+            }
+            
+            finishMove() {
+                this.currentMove = null;
+                this.movePhase = 'NONE';
+                if (this.y >= GROUND_Y) {
+                    this.changeState(CHAR_STATE.IDLE);
+                }
+            }
+
+            // Process receiving a hit
+            takeHit(attacker, move) {
+                // Check if blocking
+                const isBlocking = this.currentMove && this.currentMove.id === 'BLOCK' && this.movePhase === 'ACTIVE';
+                // Check direction - can only block if facing the attack
+                // (Simplified: if attacker is on left and we face left, we can block)
+                const correctDirection = (attacker.x < this.x && this.facing === -1) || (attacker.x > this.x && this.facing === 1);
+                
+                if (isBlocking && correctDirection) {
+                    // Blocked!
+                    const chipDamage = Math.floor(move.damage * 0.2);
+                    this.health -= chipDamage;
+                    this.lockedFrames = move.blockstun;
+                    this.changeState(CHAR_STATE.BLOCKSTUN);
+                    
+                    // Pushback applied to both
+                    this.vx = (move.pushback * 0.8) * -this.facing;
+                    attacker.vx = (move.pushback * 0.5) * -attacker.facing;
+                    
+                    logCombat(`${this.id} BLOCKED ${move.name} (-${chipDamage}hp)`, this.id === 'P1' ? 'p1' : 'p2');
+                    
+                    // Interrupt current move
+                    this.currentMove = null;
+                    this.movePhase = 'NONE';
+                    
+                } else {
+                    // Hit!
+                    this.health -= move.damage;
+                    this.lockedFrames = move.hitstun;
+                    
+                    if (move.knockdown) {
+                        this.changeState(CHAR_STATE.KNOCKDOWN);
+                        this.lockedFrames += 10; // Extra time on ground
+                        this.vy = -5; // Small pop up
+                    } else {
+                        this.changeState(CHAR_STATE.HITSTUN);
+                    }
+                    
+                    this.vx = move.pushback * -this.facing;
+                    
+                    logCombat(`${this.id} hit by ${move.name} for ${move.damage} DMG!`, 'sys');
+                    
+                    // Interrupt whatever they were doing
+                    this.currentMove = null;
+                    this.movePhase = 'NONE';
+                }
+                
+                // Ensure health doesn't drop below 0
+                if (this.health < 0) this.health = 0;
+            }
+
+            changeState(newState) {
+                this.state = newState;
+                this.stateTimer = 0;
+            }
+
+            // Get current active hitbox (if any)
+            getHitbox() {
+                if (this.currentMove && this.currentMove.type === 'attack' && this.movePhase === 'ACTIVE') {
+                    const m = this.currentMove;
+                    // Calculate absolute position based on facing direction
+                    const hx = this.x + (m.hitbox.ox * this.facing);
+                    const hy = this.y + m.hitbox.oy;
+                    
+                    return {
+                        x: this.facing === 1 ? hx : hx - m.hitbox.w, // Adjust x based on width if facing left
+                        y: hy - m.hitbox.h/2, // Center vertically
+                        w: m.hitbox.w,
+                        h: m.hitbox.h
+                    };
+                }
+                return null;
+            }
+            
+            // Get hurtbox (where they can be hit)
+            getHurtbox() {
+                return {
+                    x: this.x - this.w/2,
+                    y: this.y - this.h,
+                    w: this.w,
+                    h: this.h
+                };
+            }
+
+            draw(ctx) {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                
+                // Color based on state
+                let drawColor = this.color;
+                if (this.state === CHAR_STATE.STARTUP) drawColor = '#f39c12'; // Yellow/Orange
+                else if (this.state === CHAR_STATE.ACTIVE) drawColor = '#e74c3c'; // Red
+                else if (this.state === CHAR_STATE.RECOVERY) drawColor = '#95a5a6'; // Grey
+                else if (this.state === CHAR_STATE.HITSTUN) drawColor = '#fff'; // Flash white
+                else if (this.state === CHAR_STATE.BLOCKSTUN) drawColor = '#3498db'; // Blue
+                
+                // Draw Character Body (simple rectangle)
+                ctx.fillStyle = drawColor;
+                
+                let h = this.h;
+                let yOff = -this.h;
+                
+                // Squat if knockdown
+                if (this.state === CHAR_STATE.KNOCKDOWN) {
+                    h = this.h / 2;
+                    yOff = -h;
+                }
+                
+                ctx.fillRect(-this.w/2, yOff, this.w, h);
+                
+                // Draw eye to indicate facing direction
+                ctx.fillStyle = '#000';
+                const eyeX = this.facing === 1 ? 10 : -15;
+                ctx.fillRect(eyeX, yOff + 15, 5, 5);
+
+                // Draw Hitbox if active (for visual debugging/understanding)
+                const hitbox = this.getHitbox();
+                if (hitbox) {
+                    ctx.restore(); // Need to draw hitbox in absolute coords
+                    ctx.fillStyle = 'rgba(231, 76, 60, 0.6)'; // Translucent red
+                    ctx.fillRect(hitbox.x, hitbox.y, hitbox.w, hitbox.h);
+                    ctx.save();
+                    ctx.translate(this.x, this.y);
+                }
+                
+                // Draw Action text above head
+                if (this.currentMove) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+                    ctx.font = '10px "Press Start 2P"';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(this.currentMove.name, 0, yOff - 15);
+                    
+                    // Small progress bar for the move phase
+                    let maxFrames = 0;
+                    let color = '#fff';
+                    if (this.movePhase === 'STARTUP') { maxFrames = this.currentMove.startup; color = '#f39c12'; }
+                    else if (this.movePhase === 'ACTIVE') { maxFrames = this.currentMove.active; color = '#e74c3c'; }
+                    else if (this.movePhase === 'RECOVERY') { maxFrames = this.currentMove.recovery; color = '#95a5a6'; }
+                    
+                    if (maxFrames > 0) {
+                        const pct = this.stateTimer / maxFrames;
+                        ctx.fillStyle = '#333';
+                        ctx.fillRect(-15, yOff - 10, 30, 4);
+                        ctx.fillStyle = color;
+                        ctx.fillRect(-15, yOff - 10, 30 * pct, 4);
+                    }
+                }
+
+                ctx.restore();
+            }
+        }
+
+
+        let p1, p2;
+        let globalFrameCount = 0;
+        let resolveTimer = null;
+        let currentState = GAME_STATE.MENU;
+        let p1SelectedAction = null;
+
+        function initGame() {
+            p1 = new Fighter('P1', 200, '#00d2d3', 1); // Cyan, facing right
+            p2 = new Fighter('CPU', 600, '#ff6b6b', -1); // Red/Pink, facing left
+            
+            globalFrameCount = 0;
+            ui.combatLog.innerHTML = '<div class="log-sys">Match started! Predict your opponent.</div>';
+            
+            updateUI();
+            enterPlanningPhase();
+            
+            ui.overlay.style.display = 'none';
+            currentState = GAME_STATE.PLANNING;
+            
+            // Start render loop
+            requestAnimationFrame(renderLoop);
+        }
+
+        function enterPlanningPhase() {
+            currentState = GAME_STATE.PLANNING;
+            p1SelectedAction = null;
+            ui.lockInBtn.disabled = true;
+            
+            // Build UI buttons based on available moves
+            ui.actionPanel.innerHTML = '';
+            
+            // Only allow moves if P1 is not locked (e.g., in hitstun from previous exchange)
+            if (p1.lockedFrames > 0) {
+                 ui.actionPanel.innerHTML = '<div class="col-span-3 text-center text-red-400 py-4 font-bold">LOCKED IN ANIMATION</div>';
+                 // Auto lock-in to continue simulation
+                 setTimeout(() => {
+                     p1.queuedAction = 'WAIT';
+                     cpuChooseAction();
+                     startResolutionPhase();
+                 }, 1000);
+            } else {
+                // Populate move buttons
+                Object.values(MOVES).forEach(move => {
+                    const btn = document.createElement('button');
+                    btn.className = `action-btn ${move.class} text-xs`;
+                    btn.innerText = move.name;
+                    
+                    btn.onmouseover = () => {
+                        ui.hoverDesc.innerHTML = `<span class="text-white">${move.name}:</span> S:${move.startup} A:${move.active} R:${move.recovery} - ${move.desc}`;
+                    };
+                    btn.onmouseout = () => {
+                        if (!p1SelectedAction) ui.hoverDesc.innerText = 'Hover over a move to see details.';
+                        else {
+                            const sel = MOVES[p1SelectedAction];
+                            ui.hoverDesc.innerHTML = `Selected: <span class="text-yellow-400">${sel.name}</span>`;
+                        }
+                    };
+                    
+                    btn.onclick = () => {
+                        // Deselect others
+                        document.querySelectorAll('.action-btn').forEach(b => b.classList.remove('ring-2', 'ring-white', 'opacity-100'));
+                        document.querySelectorAll('.action-btn').forEach(b => b.classList.add('opacity-70'));
+                        
+                        // Select this
+                        btn.classList.remove('opacity-70');
+                        btn.classList.add('ring-2', 'ring-white', 'opacity-100');
+                        
+                        p1SelectedAction = move.id;
+                        ui.lockInBtn.disabled = false;
+                        ui.hoverDesc.innerHTML = `Selected: <span class="text-yellow-400">${move.name}</span>`;
+                    };
+                    
+                    ui.actionPanel.appendChild(btn);
+                });
+            }
+            
+            // Update advantage indicator
+            if (p1.lockedFrames === 0 && p2.lockedFrames > 0) {
+                ui.advantageInd.innerText = `+${p2.lockedFrames} ADVANTAGE`;
+                ui.advantageInd.className = "text-xs font-bold text-green-400";
+            } else if (p1.lockedFrames > 0 && p2.lockedFrames === 0) {
+                ui.advantageInd.innerText = `-${p1.lockedFrames} DISADVANTAGE`;
+                ui.advantageInd.className = "text-xs font-bold text-red-400";
+            } else {
+                ui.advantageInd.innerText = `NEUTRAL (0)`;
+                ui.advantageInd.className = "text-xs font-bold text-gray-400";
+            }
+        }
+
+        // Extremely simple CPU logic
+        function cpuChooseAction() {
+            if (p2.lockedFrames > 0) {
+                p2.queuedAction = 'WAIT';
+                return;
+            }
+
+            const dist = Math.abs(p1.x - p2.x);
+            let choices = [];
+
+            if (dist > 300) {
+                // Far away
+                choices = ['DASH_FWD', 'WAIT', 'JUMP'];
+            } else if (dist > 150) {
+                // Mid range
+                choices = ['DASH_FWD', 'HEAVY_KICK', 'DASH_BCK'];
+            } else {
+                // Close range
+                // If player is actionable, maybe block or jab
+                if (p1.lockedFrames === 0) {
+                    choices = ['JAB', 'BLOCK', 'SWEEP', 'DASH_BCK'];
+                } else {
+                    // Player is stuck, punish!
+                    choices = ['HEAVY_KICK', 'SWEEP', 'JAB'];
+                }
+            }
+
+            // Pick random from weighted choices
+            p2.queuedAction = choices[Math.floor(Math.random() * choices.length)];
+        }
+
+        // Called when Lock In button is pressed
+        ui.lockInBtn.onclick = () => {
+            if (currentState !== GAME_STATE.PLANNING || !p1SelectedAction) return;
+            
+            p1.queuedAction = p1SelectedAction;
+            cpuChooseAction();
+            
+            // Disable UI
+            ui.actionPanel.innerHTML = '<div class="col-span-3 text-center text-gray-400 py-4">SIMULATING...</div>';
+            ui.lockInBtn.disabled = true;
+            
+            startResolutionPhase();
+        };
+
+
+        function startResolutionPhase() {
+            currentState = GAME_STATE.RESOLVING;
+            
+            // Apply queued actions if characters are free to act
+            if (p1.lockedFrames === 0 && p1.queuedAction) {
+                p1.executeAction(p1.queuedAction);
+                p1.queuedAction = null;
+            }
+            if (p2.lockedFrames === 0 && p2.queuedAction) {
+                p2.executeAction(p2.queuedAction);
+                p2.queuedAction = null;
+            }
+
+            // Determine how many frames to simulate.
+            // We simulate until AT LEAST ONE character becomes IDLE (lockedFrames == 0)
+            // Or if both are locked, simulate until the first one wakes up.
+            
+            let framesToSimulate = 1;
+            
+            // Logic to step through simulation
+            // To make it look cool, we use setInterval instead of resolving instantly
+            resolveTimer = setInterval(() => {
+                stepSimulation();
+                
+                // Update UI every simulated frame for visual feedback
+                updateUI();
+                
+                // Check if we should pause simulation and go back to planning
+                // We stop if either player becomes actionable (lockedFrames hits 0 AND they are grounded)
+                const p1Free = p1.lockedFrames === 0 && p1.y >= GROUND_Y;
+                const p2Free = p2.lockedFrames === 0 && p2.y >= GROUND_Y;
+                
+                // Don't stop on frame 0 if we just started a move
+                if ((p1Free || p2Free) && framesToSimulate > 1) {
+                    clearInterval(resolveTimer);
+                    
+                    // Check for Game Over
+                    if (p1.health <= 0 || p2.health <= 0) {
+                        endGame();
+                    } else {
+                        // Brief pause before going back to planning
+                        setTimeout(() => {
+                            enterPlanningPhase();
+                        }, 500);
+                    }
+                }
+                
+                framesToSimulate++;
+                
+                // Failsafe
+                if (framesToSimulate > 200) {
+                    clearInterval(resolveTimer);
+                    console.error("Simulation ran too long, forcing stop.");
+                    enterPlanningPhase();
+                }
+
+            }, 1000 / (FPS * 1.5)); // Play out slightly faster than realtime
+        }
+
+        // One frame of game logic
+        function stepSimulation() {
+            globalFrameCount++;
+            
+            // 1. Update facing direction (only if not locked in an attack/hitstun)
+            if (p1.lockedFrames === 0 && p1.y >= GROUND_Y) p1.facing = p2.x < p1.x ? -1 : 1;
+            if (p2.lockedFrames === 0 && p2.y >= GROUND_Y) p2.facing = p1.x < p2.x ? -1 : 1;
+
+            // 2. Process moves (advance timers, change phases)
+            p1.processMoveFrame();
+            p2.processMoveFrame();
+            
+            // 3. Process Physics (Movement, Gravity)
+            p1.updatePhysics();
+            p2.updatePhysics();
+            
+            // Keep them from passing through each other on the ground simply
+            if (p1.y >= GROUND_Y && p2.y >= GROUND_Y) {
+                const dist = Math.abs(p1.x - p2.x);
+                const minDist = (p1.w + p2.w) / 2;
+                if (dist < minDist) {
+                    // Push apart
+                    const overlap = minDist - dist;
+                    if (p1.x < p2.x) {
+                        p1.x -= overlap/2;
+                        p2.x += overlap/2;
+                    } else {
+                        p1.x += overlap/2;
+                        p2.x -= overlap/2;
+                    }
+                }
+            }
+
+            // 4. Collision Detection (Hitboxes vs Hurtboxes)
+            checkCollisions();
+        }
+        
+        function checkCollisions() {
+            // Did P1 hit P2?
+            const hb1 = p1.getHitbox();
+            const hurt2 = p2.getHurtbox();
+            
+            // Did P2 hit P1?
+            const hb2 = p2.getHitbox();
+            const hurt1 = p1.getHurtbox();
+            
+            let p1HitP2 = false;
+            let p2HitP1 = false;
+            
+            // Basic AABB intersection
+            const isIntersecting = (rect1, rect2) => {
+                return rect1.x < rect2.x + rect2.w &&
+                       rect1.x + rect1.w > rect2.x &&
+                       rect1.y < rect2.y + rect2.h &&
+                       rect1.h + rect1.y > rect2.y;
+            };
+
+            // Only register hit on the FIRST frame of the ACTIVE phase to prevent multi-hitting per move
+            if (hb1 && p1.stateTimer === 0 && p1.movePhase === 'ACTIVE') {
+                if (isIntersecting(hb1, hurt2)) p1HitP2 = true;
+            }
+            if (hb2 && p2.stateTimer === 0 && p2.movePhase === 'ACTIVE') {
+                if (isIntersecting(hb2, hurt1)) p2HitP1 = true;
+            }
+            
+            // Resolve hits
+            if (p1HitP2 && p2HitP1) {
+                // CLASH / TRADE
+                logCombat('TRADE!', 'sys');
+                p1.takeHit(p2, p2.currentMove);
+                p2.takeHit(p1, p1.currentMove);
+            } else if (p1HitP2) {
+                p2.takeHit(p1, p1.currentMove);
+            } else if (p2HitP1) {
+                p1.takeHit(p2, p2.currentMove);
+            }
+        }
+
+
+        function renderLoop() {
+            // Clear canvas
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            
+            // Draw Ground Line
+            ctx.beginPath();
+            ctx.moveTo(0, GROUND_Y);
+            ctx.lineTo(CANVAS_WIDTH, GROUND_Y);
+            ctx.strokeStyle = '#222';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // Draw Background elements (simple grid to show movement)
+            ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+            ctx.lineWidth = 1;
+            for(let i=0; i<CANVAS_WIDTH; i+=50) {
+                ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, GROUND_Y); ctx.stroke();
+            }
+
+            if (p1 && p2) {
+                // Draw shadows
+                ctx.fillStyle = 'rgba(0,0,0,0.3)';
+                ctx.beginPath();
+                ctx.ellipse(p1.x, GROUND_Y, p1.w/1.5, 5, 0, 0, Math.PI*2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(p2.x, GROUND_Y, p2.w/1.5, 5, 0, 0, Math.PI*2);
+                ctx.fill();
+
+                // Draw Fighters
+                p1.draw(ctx);
+                p2.draw(ctx);
+            }
+
+            // Loop
+            if (currentState !== GAME_STATE.MENU) {
+                requestAnimationFrame(renderLoop);
+            }
+        }
+
+        function updateUI() {
+            if (!p1 || !p2) return;
+            
+            // Health Bars
+            ui.p1Health.style.width = `${Math.max(0, (p1.health / MAX_HEALTH) * 100)}%`;
+            ui.p2Health.style.width = `${Math.max(0, (p2.health / MAX_HEALTH) * 100)}%`;
+            
+            // State Text
+            const p1M = p1.currentMove ? ` [${p1.currentMove.name}]` : '';
+            const p2M = p2.currentMove ? ` [${p2.currentMove.name}]` : '';
+            ui.p1State.innerText = p1.state + p1M;
+            ui.p2State.innerText = p2.state + p2M;
+            
+            // Frame Locks
+            ui.p1Lock.innerText = p1.lockedFrames;
+            ui.p2Lock.innerText = p2.lockedFrames;
+            
+            // Colors for frame locks
+            ui.p1Lock.className = p1.lockedFrames > 0 ? 'text-red-400 font-bold' : 'text-green-400 font-bold';
+            ui.p2Lock.className = p2.lockedFrames > 0 ? 'text-red-400 font-bold' : 'text-green-400 font-bold';
+            
+            ui.frameCounter.innerText = `F: ${globalFrameCount}`;
+        }
+
+        function logCombat(msg, type = 'sys') {
+            const div = document.createElement('div');
+            div.className = `log-entry log-${type}`;
+            div.innerText = `[F${globalFrameCount}] ${msg}`;
+            ui.combatLog.appendChild(div);
+            ui.combatLog.scrollTop = ui.combatLog.scrollHeight;
+        }
+
+        function endGame() {
+            currentState = GAME_STATE.GAME_OVER;
+            clearInterval(resolveTimer);
+            
+            let resultText = "DRAW";
+            if (p1.health > 0 && p2.health <= 0) resultText = "P1 WINS!";
+            else if (p2.health > 0 && p1.health <= 0) resultText = "CPU WINS!";
+            
+            ui.overlayTitle.innerText = resultText;
+            ui.overlayDesc.innerText = `Match ended at Frame ${globalFrameCount}`;
+            ui.btnStart.innerText = "PLAY AGAIN";
+            ui.overlay.style.display = 'flex';
+        }
+
+        // Initialize Menu
+        ui.btnStart.onclick = initGame;
+        
+        // Initial draw just to make canvas not empty
+        ctx.fillStyle = '#2f3640';
+        ctx.fillRect(0,0,CANVAS_WIDTH,CANVAS_HEIGHT);
+        ctx.fillStyle = '#fff';
+        ctx.font = '20px "Press Start 2P"';
+        ctx.textAlign = 'center';
+        ctx.fillText("READY", CANVAS_WIDTH/2, CANVAS_HEIGHT/2);
+
+    </script>
+</body>
+</html>
